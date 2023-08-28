@@ -1,0 +1,36 @@
+data:
+  image_size: 96
+  num_keypoints: 15
+  num_outputs: 30
+  test_split: 0.2
+  random_seed: 42
+  training_csv: "data/training.csv"
+  test_csv: "data/test.csv"
+  lookup_csv: "data/IdLookupTable.csv"
+
+cnn:
+  batch_size: 64
+  val_split: 0.1
+  adam:
+    learning_rate: 0.0005
+    epochs: 250
+    patience: 20
+  sgd:
+    learning_rate: 0.001
+    momentum: 0.9
+    epochs: 150
+    patience: 20
+    reduce_lr_factor: 0.5
+    reduce_lr_patience: 10
+    min_lr: 0.000001
+  loss: "huber"
+  huber_delta: 1.0
+
+resnet:
+  batch_size: 16
+  learning_rate: 0.0001
+  epochs: 100
+  patience: 5
+  step_lr_size: 5
+  step_lr_gamma: 0.1
+  loss: "mse_ignore_nan"
