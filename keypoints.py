@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 
-path = '/Users/khh/Library/CloudStorage/OneDrive-Personal/STUDY/USF/Fall 2023/Advanced Machine Learning/Facial Keypoints Detection/'
+path = '/Users/khh/Library/CloudStorage/OneDrive-Personal/STUDY/USF/Fall 2023/Advanced Machine Learning/FacialKeypointsDetectionData/'
 training_data = pd.read_csv(path + 'training.csv')
 test_data = pd.read_csv(path + 'test.csv')
 sample_submission = pd.read_csv(path + 'SampleSubmission.csv')
@@ -112,29 +112,35 @@ class FacialKeypointsNet(nn.Module):
         super(FacialKeypointsNet, self).__init__()
         
         # Convolutional layers
-        self.conv1 = nn.Conv2d(1, 32, 5)  # 1 input channel, 32 output channels, 5x5 kernel
-        self.conv2 = nn.Conv2d(32, 64, 3)
-        self.conv3 = nn.Conv2d(64, 128, 3)
-        
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=5, padding=2)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(128)
+        self.conv4 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
+        self.bn4 = nn.BatchNorm2d(256)
+
         # Dense layers
-        self.dense1 = nn.Linear(128*10*10, 1024)  # Flattened dimensions: 128x10x10
-        self.dense2 = nn.Linear(1024, 256)
-        self.dense3 = nn.Linear(256, 30)  # 30 outputs (15 keypoints * 2 (x, y))
+        self.fc1 = nn.Linear(256*6*6, 1024)
+        self.fc2 = nn.Linear(1024, 512)
+        self.fc3 = nn.Linear(512, 30)  # Output layer (30 keypoints)
         
         # Dropout
         self.dropout = nn.Dropout(0.5)
         
     def forward(self, x):
-        x = F.relu(F.max_pool2d(self.conv1(x), 2))
-        x = F.relu(F.max_pool2d(self.conv2(x), 2))
-        x = F.relu(F.max_pool2d(self.conv3(x), 2))
-        
-        x = x.view(x.size(0), -1)  # Flatten
-        
-        x = F.relu(self.dense1(x))
+        x = F.max_pool2d(F.relu(self.bn1(self.conv1(x))), 2)
+        x = F.max_pool2d(F.relu(self.bn2(self.conv2(x))), 2)
+        x = F.max_pool2d(F.relu(self.bn3(self.conv3(x))), 2)
+        x = F.max_pool2d(F.relu(self.bn4(self.conv4(x))), 2)
+
+        # Flatten and apply dense layers
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.fc1(x))
         x = self.dropout(x)
-        x = F.relu(self.dense2(x))
-        x = self.dense3(x)
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
         
         return x
 
@@ -145,8 +151,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = model.to(device)
 
 # Loss Function & Optimizer
-criterion = nn.MSELoss()
+criterion = nn.SmoothL1Loss()
 optimizer = optim.Adam(model.parameters(), lr=0.0001)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
 # %%
 # Training Function
@@ -210,6 +217,7 @@ for epoch in range(num_epochs):
 
     print(f"Epoch {epoch+1}/{num_epochs}")
     print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+    scheduler.step()
 
 plt.plot(L_history_train, label='Training loss')
 plt.plot(L_history_val, label='Validation loss')
