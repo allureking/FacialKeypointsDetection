@@ -9,6 +9,8 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
 path = '/Users/khh/Library/CloudStorage/OneDrive-Personal/STUDY/USF/Fall 2023/Advanced Machine Learning/FacialKeypointsDetectionData/'
 training_data = pd.read_csv(path + 'training.csv')
@@ -106,6 +108,56 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test, batch_size=16, shuff
 x_batch, y_batch = next(iter(dataloader_train))
 print(x_batch.shape, y_batch.shape)
 
+# %%
+# Data Augmentation
+class AugmentedFacialKeypointsDataset(torch.utils.data.Dataset):
+    def __init__(self, X, y=None, augment=False):
+        self.X = X
+        self.y = y
+        self.augment = augment
+
+        # Define the augmentation pipeline
+        self.transforms = A.Compose([
+            A.HorizontalFlip(p=0.5),
+            A.Rotate(limit=15, p=0.5, border_mode=0, value=0),
+            A.RandomBrightnessContrast(p=0.2),
+            ToTensorV2()
+        ], keypoint_params=A.KeypointParams(format='xy'))
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, i):
+        img = self.X[i]
+        keypts = self.y[i]
+
+        # Apply augmentations
+        if self.augment:
+            keypts_list = [(keypts[i], keypts[i+1]) for i in range(0, len(keypts), 2)]
+            
+            augmented = self.transforms(image=img, keypoints=keypts_list)
+            img = augmented['image']
+            keypts_list = augmented['keypoints']
+            
+            keypts = []
+            for x, y in keypts_list:
+                keypts.append(x)
+                keypts.append(y)
+            return img, keypts
+
+dataset_train = AugmentedFacialKeypointsDataset(X_train, y_train, augment=True)
+dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size=16, shuffle=True)
+
+N_train = len(X_train)
+i = np.random.randint(N_train)
+img, keypts = dataset_train[i]
+x_coords = keypts[0::2]
+y_coords = keypts[1::2]
+img = img.reshape([96, 96])
+plt.figure()
+plt.imshow(img, cmap='gray')    
+plt.scatter(x_coords, y_coords, c='r', marker='.')
+plt.show()
 # %% Define the neural network model
 class FacialKeypointsNet(nn.Module):
     def __init__(self):
