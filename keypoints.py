@@ -9,8 +9,6 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
 
 path = '/Users/khh/Library/CloudStorage/OneDrive-Personal/STUDY/USF/Fall 2023/Advanced Machine Learning/FacialKeypointsDetectionData/'
 training_data = pd.read_csv(path + 'training.csv')
@@ -22,7 +20,8 @@ id_lookup_table = pd.read_csv(path + 'IdLookupTable.csv')
 # Data Preprocessing
 
 # Handle missing values: Drop rows with missing keypoints
-training_data_clean = training_data.dropna()
+# training_data_clean = training_data.dropna()
+training_data_clean = training_data
 
 # Extract Image and Keypoints data
 images = []
@@ -160,9 +159,20 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(device)
 model = model.to(device)
 
+class MSELoss_Ignore_Nan(nn.Module):
+
+    def forward(self, pred, label):
+
+        count = torch.isfinite(label).sum().item()
+        label = torch.where(torch.isnan(label), pred, label)
+        loss = torch.sum((pred-label)**2)
+
+        return loss / count
+
 # Loss Function & Optimizer
 # criterion = nn.SmoothL1Loss()
-criterion = nn.MSELoss()
+# criterion = nn.MSELoss()
+criterion = MSELoss_Ignore_Nan()
 optimizer = optim.Adam(model.parameters(), lr=0.0001)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
@@ -268,27 +278,25 @@ def show_keypoints(image, keypoints):
     plt.axis('off')
     plt.show()
     
-# #%%
-# with torch.no_grad():
-#     x_batch, y_batch = next(iter(dataloader_train))
-#     y_pred = model(x_batch)
-# i = np.random.randint(16)
-# x = x_batch[i].numpy().reshape(96, 96)
-# y = y_pred[i]
-# show_keypoints(x, y)
-# #%%
+#%%
+with torch.no_grad():
+    x_batch, y_batch = next(iter(dataloader_train))
+    y_pred = model(x_batch)
+i = np.random.randint(16)
+x = x_batch[i].numpy().reshape(96, 96)
+y = y_pred[i]
+show_keypoints(x, y)
+#%%
+i = np.random.randint(1782) # Select a random index for the image with keypoints
+img = test_images[i]
+key_pts = predictions[i]
 
+# The image should be scaled back to 0-255 if it was normalized
+img = img * 255.0
+img = img.astype(np.uint8)
 
-# i = np.random.randint(1782) # Select a random index for the image with keypoints
-# img = test_images[i]
-# key_pts = predictions[i]
-
-# # The image should be scaled back to 0-255 if it was normalized
-# img = img * 255.0
-# img = img.astype(np.uint8)
-
-# # Display the image and keypoints
-# show_keypoints(img, key_pts)
+# Display the image and keypoints
+show_keypoints(img, key_pts)
 
 
 # %% 
