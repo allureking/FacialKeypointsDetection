@@ -108,61 +108,78 @@ dataloader_test = torch.utils.data.DataLoader(dataset_test, batch_size=16, shuff
 x_batch, y_batch = next(iter(dataloader_train))
 print(x_batch.shape, y_batch.shape)
 
-# # %%
-# # Data Augmentation
-# class AugmentedFacialKeypointsDataset(torch.utils.data.Dataset):
-#     def __init__(self, X, y=None, augment=False):
-#         self.X = X
-#         self.y = y
-#         self.augment = augment
+# %%
+# Data Augmentation
+class AugmentedFacialKeypointsDataset(torch.utils.data.Dataset):
+    def __init__(self, X, y=None, augment=False):
+        self.X = X
+        self.y = y
+        self.augment = augment
 
-#         # Define the augmentation pipeline
-#         self.transforms = A.Compose([
-#             A.HorizontalFlip(p=0.5),
-#             A.Rotate(limit=15, p=0.5, border_mode=0, value=0),
-#             A.RandomBrightnessContrast(p=0.2),
-#             ToTensorV2()
-#         ], keypoint_params=A.KeypointParams(format='xy'))
+        # Define the augmentation pipeline
+        self.transforms = A.Compose([
+            A.HorizontalFlip(p=0.5),
+            A.Rotate(limit=15, p=0.5, border_mode=0, value=0),
+            A.RandomBrightnessContrast(p=0.2),
+            ToTensorV2()
+        ], keypoint_params=A.KeypointParams(format='xy',
+                                            remove_invisible=False))
 
-#     def __len__(self):
-#         return len(self.X)
+    def __len__(self):
+        return len(self.X)
 
-#     def __getitem__(self, i):
-#         img = self.X[i]
-#         keypts = self.y[i]
+    def __getitem__(self, i):
+        img = self.X[i]
+        keypts = self.y[i]
 
-#         # Apply augmentations
-#         if self.augment:
-#             keypts_list = [(keypts[i], keypts[i+1]) for i in range(0, len(keypts), 2)]
-#             augmented = self.transforms(image=img, keypoints=keypts_list)
-#             img = augmented['image']
-#             keypts_list = augmented['keypoints']
+        # Apply augmentations
+        if self.augment:
+            keypts_list = [(keypts[i], keypts[i+1]) for i in range(0, len(keypts), 2)]
+            augmented = self.transforms(image=img, keypoints=keypts_list)
+            img = augmented['image']
+            keypts_list = augmented['keypoints']
 
-#                 # Check if any keypoints are missing after augmentation
-#             if len(keypts_list) != len(keypts) // 2:
-#                 # Skip this item if keypoints are missing
-#                 return None
-#             else:
-#                 keypts = np.array([coord for pt in keypts_list for coord in pt], dtype=np.float32)
-#         else:
-#             img = np.array(img, dtype=np.float32)
-#             keypts = np.array(keypts, dtype=np.float32)
+                # Check if any keypoints are missing after augmentation
+            if len(keypts_list) != len(keypts) // 2:
+                # Skip this item if keypoints are missing
+                print('hello world!!')
+                print(len(keypts_list))
+                print(len(keypts))
+                print(self.X.shape)
+                print(i)
+                return None
+            else:
+                keypts = np.array([coord for pt in keypts_list for coord in pt], dtype=np.float32)
+        else:
+            img = np.array(img, dtype=np.float32)
+            img = img.reshape((1, 96, 96))
+            img = torch.tensor(img, dtype=torch.float32)
+                              
+            keypts = np.array(keypts, dtype=np.float32)
+            
         
-#         return img, keypts
+        return img, keypts
 
-# dataset_train = AugmentedFacialKeypointsDataset(X_train, y_train, augment=True)
-# dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size=16, shuffle=True)
-
-# N_train = len(X_train)
-# i = np.random.randint(N_train)
-# img, keypts = dataset_train[i]
-# x_coords = keypts[0::2]
-# y_coords = keypts[1::2]
-# img = img.reshape([96, 96])
-# plt.figure()
-# plt.imshow(img, cmap='gray')    
-# plt.scatter(x_coords, y_coords, c='r', marker='.')
-# plt.show()
+#%%
+dataset_train = AugmentedFacialKeypointsDataset(X_train, y_train, augment=True)
+dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size=16, shuffle=True)
+dataset_val = AugmentedFacialKeypointsDataset(X_val, y_val, augment=False)
+dataloader_val = torch.utils.data.DataLoader(dataset_val, batch_size=16, shuffle=False)
+#%%
+N_train = len(X_train)
+N_val = len(X_val)
+i = np.random.randint(N_train)
+# i = np.random.randint(N_val)
+img, keypts = dataset_train[i]
+# img, keypts = dataset_val[i]
+x_coords = keypts[0::2]
+y_coords = keypts[1::2]
+plt.figure()
+plt.imshow(img.reshape((96,96)), cmap='gray')    
+plt.scatter(x_coords, y_coords, c='r', marker='.')
+plt.show()
+print(img.max())
+print(img.shape)
 # %% Define the neural network model
 class FacialKeypointsNet(nn.Module):
     def __init__(self):
@@ -208,7 +225,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = model.to(device)
 
 # Loss Function & Optimizer
-criterion = nn.SmoothL1Loss()
+# criterion = nn.SmoothL1Loss()
+criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.0001)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
@@ -302,7 +320,8 @@ plt.show()
 # %%
 # Make Predictions
 predictions = []
-predictions = predict(model, dataloader_test, device)
+# predictions = predict(model, dataloader_test, device)
+predictions = predict(model, dataloader_val, device)
 predictions = np.clip(predictions, 0, 96)
 
 # %%
@@ -312,6 +331,17 @@ def show_keypoints(image, keypoints):
     plt.scatter(keypoints[0::2], keypoints[1::2], s=24, marker='.', c='r')
     plt.axis('off')
     plt.show()
+    
+#%%
+with torch.no_grad():
+    x_batch, y_batch = next(iter(dataloader_train))
+    y_pred = model(x_batch)
+i = np.random.randint(16)
+x = x_batch[i].numpy().reshape(96, 96)
+y = y_pred[i]
+show_keypoints(x, y)
+#%%
+
 
 i = np.random.randint(1782) # Select a random index for the image with keypoints
 img = test_images[i]
@@ -377,9 +407,11 @@ submission_df.to_csv(output_path, index=False, columns=['RowId', 'Location'])
 
 # %%
 
-
 ## TODO:
 # 1. Code Refactoring
 # 2. Try to improve the model (e.g. data augmentation (using albumentations), 
 # add more layers, change the optimizer, etc.)
-# 3. Try to improve the training process (e.g. learning rate, etc.)
+# 3. Try to improve the loss function 
+# (自定义loss function，比如当一组数据有缺失的keypoints时，
+# 不要不计算loss或者排除这组数据而是应该忽略这个keypoint的loss，
+# 然后取其他keypoints的loss的平均值作为这组数据的loss)   
