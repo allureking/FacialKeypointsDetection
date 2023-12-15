@@ -44,20 +44,6 @@ keypoints = training_data_clean.drop(columns=['Image']).to_numpy().astype(np.flo
 X_train, X_val, y_train, y_val = train_test_split(images, keypoints, test_size=0.2, random_state=42)
 
 # %% 
-# Show images with keypoints
-
-N_train = len(X_train)
-i = np.random.randint(N_train)
-img = X_train[i]
-keypts = y_train[i]
-x_coords = keypts[0::2]
-y_coords = keypts[1::2]
-plt.figure()
-plt.imshow(img, cmap='gray')    
-plt.scatter(x_coords, y_coords, c='r', marker='.')
-plt.show()
-
-# %% 
 # Define the FacialKeypoints Dataset class
 
 class FacialKeypointsDataset(torch.utils.data.Dataset):
@@ -106,122 +92,72 @@ dataloader_val = torch.utils.data.DataLoader(dataset_val, batch_size=16, shuffle
 dataloader_test = torch.utils.data.DataLoader(dataset_test, batch_size=16, shuffle=False)
 
 x_batch, y_batch = next(iter(dataloader_train))
-print(x_batch.shape, y_batch.shape)
 
-# %%
-# Data Augmentation
-class AugmentedFacialKeypointsDataset(torch.utils.data.Dataset):
-    def __init__(self, X, y=None, augment=False):
-        self.X = X
-        self.y = y
-        self.augment = augment
-
-        # Define the augmentation pipeline
-        self.transforms = A.Compose([
-            A.HorizontalFlip(p=0.5),
-            A.Rotate(limit=15, p=0.5, border_mode=0, value=0),
-            A.RandomBrightnessContrast(p=0.2),
-            ToTensorV2()
-        ], keypoint_params=A.KeypointParams(format='xy',
-                                            remove_invisible=False))
-
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, i):
-        img = self.X[i]
-        keypts = self.y[i]
-
-        # Apply augmentations
-        if self.augment:
-            keypts_list = [(keypts[i], keypts[i+1]) for i in range(0, len(keypts), 2)]
-            augmented = self.transforms(image=img, keypoints=keypts_list)
-            img = augmented['image']
-            keypts_list = augmented['keypoints']
-
-                # Check if any keypoints are missing after augmentation
-            if len(keypts_list) != len(keypts) // 2:
-                # Skip this item if keypoints are missing
-                print('hello world!!')
-                print(len(keypts_list))
-                print(len(keypts))
-                print(self.X.shape)
-                print(i)
-                return None
-            else:
-                keypts = np.array([coord for pt in keypts_list for coord in pt], dtype=np.float32)
-        else:
-            img = np.array(img, dtype=np.float32)
-            img = img.reshape((1, 96, 96))
-            img = torch.tensor(img, dtype=torch.float32)
-                              
-            keypts = np.array(keypts, dtype=np.float32)
-            
-        
-        return img, keypts
-
-#%%
-dataset_train = AugmentedFacialKeypointsDataset(X_train, y_train, augment=True)
-dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size=16, shuffle=True)
-dataset_val = AugmentedFacialKeypointsDataset(X_val, y_val, augment=False)
-dataloader_val = torch.utils.data.DataLoader(dataset_val, batch_size=16, shuffle=False)
-#%%
-N_train = len(X_train)
-N_val = len(X_val)
-i = np.random.randint(N_train)
-# i = np.random.randint(N_val)
-img, keypts = dataset_train[i]
-# img, keypts = dataset_val[i]
-x_coords = keypts[0::2]
-y_coords = keypts[1::2]
-plt.figure()
-plt.imshow(img.reshape((96,96)), cmap='gray')    
-plt.scatter(x_coords, y_coords, c='r', marker='.')
-plt.show()
-print(img.max())
-print(img.shape)
 # %% Define the neural network model
-class FacialKeypointsNet(nn.Module):
+
+class Residual(nn.Module):  #@save
+    def __init__(self, input_channels, num_channels,
+                 use_1x1conv=False, strides=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(input_channels, num_channels,
+                               kernel_size=3, padding=1, stride=strides)
+        self.conv2 = nn.Conv2d(num_channels, num_channels,
+                               kernel_size=3, padding=1)
+        if use_1x1conv:
+            self.conv3 = nn.Conv2d(input_channels, num_channels,
+                                   kernel_size=1, stride=strides)
+        else:
+            self.conv3 = None
+        self.bn1 = nn.BatchNorm2d(num_channels)
+        self.bn2 = nn.BatchNorm2d(num_channels)
+
+    def forward(self, X):
+        Y = F.relu(self.bn1(self.conv1(X)))
+        Y = self.bn2(self.conv2(Y))
+        if self.conv3:
+            X = self.conv3(X)
+        Y += X
+        return F.relu(Y)
+
+
+def resnet_block(input_channels, num_channels, num_residuals, first_block=False):
+    blk = []
+    for i in range(num_residuals):
+        if i == 0 and not first_block:
+            blk.append(Residual(input_channels, num_channels, use_1x1conv=True, strides=2))
+        else:
+            blk.append(Residual(num_channels, num_channels))
+    return blk
+
+class ResNet(nn.Module):
+
     def __init__(self):
-        super(FacialKeypointsNet, self).__init__()
-        
-        # Convolutional layers
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=5, padding=2)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(64)
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm2d(128)
-        self.conv4 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
-        self.bn4 = nn.BatchNorm2d(256)
+        super(ResNet, self).__init__()
 
-        # Dense layers
-        self.fc1 = nn.Linear(256*6*6, 1024)
-        self.fc2 = nn.Linear(1024, 512)
-        self.fc3 = nn.Linear(512, 30)  # Output layer (30 keypoints)
-        
-        # Dropout
-        self.dropout = nn.Dropout(0.5)
-        
+        self.b1 = nn.Sequential(nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
+                           nn.BatchNorm2d(32), nn.ReLU(),
+                           nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+        self.b2 = nn.Sequential(*resnet_block(32, 32, 2, first_block=True))
+        self.b3 = nn.Sequential(*resnet_block(32, 64, 2))
+        self.b4 = nn.Sequential(*resnet_block(64, 128, 2))
+        self.b5 = nn.Sequential(*resnet_block(128, 256, 2))
+        self.b6 = nn.Sequential(*resnet_block(256, 512, 2))
+
+        self.pool = nn.AdaptiveAvgPool2d((1,1))
+        self.flatten = nn.Flatten()
+        self.fc = nn.Linear(512, 30)
+
     def forward(self, x):
-        x = F.max_pool2d(F.relu(self.bn1(self.conv1(x))), 2)
-        x = F.max_pool2d(F.relu(self.bn2(self.conv2(x))), 2)
-        x = F.max_pool2d(F.relu(self.bn3(self.conv3(x))), 2)
-        x = F.max_pool2d(F.relu(self.bn4(self.conv4(x))), 2)
+        x = self.b6(self.b5(self.b4(self.b3(self.b2(self.b1(x))))))
+        x = self.fc(self.flatten(self.pool(x)))
 
-        # Flatten and apply dense layers
-        x = x.view(x.size(0), -1)
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        
         return x
 
 # %%
 # Set device and initialize the model
-model = FacialKeypointsNet()
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = ResNet()
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(device)
 model = model.to(device)
 
 # Loss Function & Optimizer
@@ -282,7 +218,7 @@ patience_counter = 0
 patience = 5
 # %% 
 # Training loop and plot the training and validation 
-num_epochs = 20
+num_epochs = 100
 
 L_history_train = []
 L_history_val = []
@@ -321,7 +257,7 @@ plt.show()
 # Make Predictions
 predictions = []
 # predictions = predict(model, dataloader_test, device)
-predictions = predict(model, dataloader_val, device)
+predictions = predict(model, dataloader_test, device)
 predictions = np.clip(predictions, 0, 96)
 
 # %%
@@ -332,33 +268,31 @@ def show_keypoints(image, keypoints):
     plt.axis('off')
     plt.show()
     
-#%%
-with torch.no_grad():
-    x_batch, y_batch = next(iter(dataloader_train))
-    y_pred = model(x_batch)
-i = np.random.randint(16)
-x = x_batch[i].numpy().reshape(96, 96)
-y = y_pred[i]
-show_keypoints(x, y)
-#%%
+# #%%
+# with torch.no_grad():
+#     x_batch, y_batch = next(iter(dataloader_train))
+#     y_pred = model(x_batch)
+# i = np.random.randint(16)
+# x = x_batch[i].numpy().reshape(96, 96)
+# y = y_pred[i]
+# show_keypoints(x, y)
+# #%%
 
 
-i = np.random.randint(1782) # Select a random index for the image with keypoints
-img = test_images[i]
-key_pts = predictions[i]
+# i = np.random.randint(1782) # Select a random index for the image with keypoints
+# img = test_images[i]
+# key_pts = predictions[i]
 
-# The image should be scaled back to 0-255 if it was normalized
-img = img * 255.0
-img = img.astype(np.uint8)
+# # The image should be scaled back to 0-255 if it was normalized
+# img = img * 255.0
+# img = img.astype(np.uint8)
 
-# Display the image and keypoints
-show_keypoints(img, key_pts)
+# # Display the image and keypoints
+# show_keypoints(img, key_pts)
 
 
 # %% 
 # # Create a submission file
-
-# Prepare a list to hold the submission data
 submission_data = []
 feature_names = [
     'left_eye_center_x', 'left_eye_center_y',
@@ -377,7 +311,6 @@ feature_names = [
     'mouth_center_top_lip_x', 'mouth_center_top_lip_y',
     'mouth_center_bottom_lip_x', 'mouth_center_bottom_lip_y'
 ]
-
 
 # Iterate over the id_lookup_table and fill in the predicted keypoints
 for i, row in id_lookup_table.iterrows():
@@ -404,7 +337,6 @@ submission_df = pd.DataFrame(submission_data)
 # Save the DataFrame to a CSV file
 output_path = path + 'submission.csv'
 submission_df.to_csv(output_path, index=False, columns=['RowId', 'Location'])
-
 # %%
 
 ## TODO:
