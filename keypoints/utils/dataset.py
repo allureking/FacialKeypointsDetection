@@ -63,7 +63,7 @@ def load_training_data(
     logger.info("Loaded %d training samples from %s", len(df), csv_path)
 
     if fillna:
-        df.fillna(method="ffill", inplace=True)
+        df = df.ffill()
 
     images = _parse_images(df["Image"])
     keypoints = df.drop(columns=["Image"]).to_numpy().astype(np.float32)
