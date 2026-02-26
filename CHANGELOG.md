@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.0] - 2026-02-26
+
+### Added
+- pytest test suite covering model output shapes, gradient flow, NaN-aware loss edge cases, dataset utilities, and config loading
+- Sample prediction images (`assets/sample_predictions_resnet.png`)
+- Training curve visualizations (`assets/training_curves.png`)
+- Model comparison overlay (`assets/model_comparison.png`)
+
+### Changed
+- Rewrote README with badges (Python, PyTorch, TensorFlow, License, Kaggle RMSE), embedded images, architecture diagrams, and code examples
+- Added parameter counts and strategy details to results table
+- Added references section (He et al. 2016, Kaggle)
+
+### Fixed
+- Deprecated `df.fillna(method="ffill")` replaced with `df.ffill()` for pandas 2.x compatibility
+
 ## [1.0.0] - 2026-02-26
 
 ### Added
